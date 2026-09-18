@@ -10,6 +10,10 @@ const Store = (() => {
     review: {},       // { "topicId:rowId": {level:, nextTs:} }  简易艾宾浩斯
     wordbook: {},     // { word: {zh, phonetic, def, topicName, ts} }
     customTopics: [], // [{...topic}] 用户自建语料
+    readings: [],     // [{...topic, reading:true}] 上传的英语阅读
+    uploads: [],      // [{id, name, icon, desc, sceneId, topics, ts}] 上传解析出的资源模块
+    checkins: {},     // { "2026/9/11": ts }
+    uploads: [],      // [{id, name, icon, desc, sceneId, ts}] 上传解析出的资源模块
     lastPractice: null, // 记录今日打卡
   };
   let state = load();
@@ -39,6 +43,9 @@ const Store = (() => {
     addLearnSeconds(sec) {
       state.stats.totalSeconds += sec;
       state.lastPractice = new Date().toDateString();
+      const key = new Date().toLocaleDateString();
+      if (!state.checkins) state.checkins = {};
+      if (!state.checkins[key]) state.checkins[key] = Date.now();
       save();
     },
     addDialogDone() { state.stats.dialogCount++; save(); },
@@ -63,12 +70,22 @@ const Store = (() => {
     addWord(word, info) {
       state.wordbook[word] = Object.assign({ ts: Date.now() }, info); save(); return true;
     },
+    updateWord(word, info) {
+      if (!state.wordbook[word]) return false;
+      state.wordbook[word] = Object.assign({}, state.wordbook[word], info); save(); return true;
+    },
     removeWord(word) {
       delete state.wordbook[word]; save();
       return false;
     },
     saveCustomTopics(arr) {
       state.customTopics = arr; save();
+    },
+    saveReadings(arr) {
+      state.readings = arr; save();
+    },
+    saveUploads(arr) {
+      state.uploads = arr; save();
     },
     reset() { state = JSON.parse(JSON.stringify(defaults)); save(); },
   };

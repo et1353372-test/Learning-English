@@ -1040,7 +1040,281 @@ const PDF_UNITS = [
 ];
 
 /* 合并进主 SCENES（前缀 d 话题 id 不与内置冲突） */
+/* 合并进主 SCENES（前缀 d 话题 id 不与内置冲突） */
 SCENES.push(...PDF_UNITS);
+
+/* ============ 即兴对话练习：随机场景库 ============
+   轻量实现（无 AI）：每个场景预置 9~10 轮对白。
+   app 先开场 → 用户轮：给中文回复方向；可「🎤 实录说」或「💡 提示」取参考英语
+   结束给出评分与标准示范对话 */
+
+const FREE_SCENARIOS = [
+  {
+    id: "f-cafe", name: "咖啡店点单", icon: "☕",
+    intro: "今天你走进一家热闹的咖啡店，店员微笑着向你走来…",
+    lines: [
+      { who: "A", en: "Hi there! Welcome to Sunny Cafe. What can I get for you today?", zh: "你好，欢迎光临，今天想喝点什么？" },
+      { who: "B", dir: "说出你想要的饮品和咖啡因偏好", sugs: [
+        { en: "I'd like an iced latte, please.", zh: "我想要一杯拿铁。" },
+        { en: "Can I have a small hot americano?", zh: "给我一小杯热美式。" },
+      ] },
+      { who: "A", en: "Sure. What size would you like? And is this for here or to go?", zh: "好的，要多大杯？在这喝还是带走？", },
+      { who: "B", dir: "选择杯型，并说明在这喝或带走", sugs: [
+        { en: "A medium, please. I'll drink it here.", zh: "中杯，在这喝。" },
+        { en: "A large one. Could I take it to go?", zh: "大杯，麻烦带走。" },
+      ] },
+      { who: "A", en: "No problem. Would you like any snacks with that?", zh: "要不要再配点吃的？" },
+      { who: "B", dir: "回答要不要加零食/甜点", sugs: [
+        { en: "A blueberry muffin sounds good.", zh: "来一个蓝莓松饼。" },
+        { en: "No thanks, just the coffee.", zh: "不用了，就要咖啡。" },
+      ] },
+      { who: "A", en: "Great choice. That'll be twelve dollars. How would you like to pay?", zh: "一共 12 美元，怎么付款？" },
+      { who: "B", dir: "说出付款方式", sugs: [
+        { en: "I'll pay by card, please.", zh: "刷卡，谢谢。" },
+        { en: "Can I use Apple Pay here?", zh: "可以用苹果支付吗？" },
+      ] },
+      { who: "A", en: "Perfect, your order will be ready in a few minutes. Have a nice day!", zh: "马上就好，祝你今天愉快！" },
+      { who: "B", dir: "礼貌向店员道谢并感谢", sugs: [
+        { en: "Thanks a lot! Have a nice day too.", zh: "谢谢，你也一样！" },
+        { en: "Thank you so much.", zh: "多谢了。" },
+      ] },
+    ],
+  },
+  {
+    id: "f-weekend", name: "同事聊周末", icon: "🗓️",
+    intro: "周一早晨，你在饮水机旁碰到同事 John，他看起来精神不错…",
+    lines: [
+      { who: "A", en: "Hey, good morning! How was your weekend?", zh: "早上好！周末过得怎么样？" },
+      { who: "B", dir: "①问候回来 ②说出周末做的1-2件事", sugs: [
+        { en: "Morning! It was great. I went hiking on Saturday.", zh: "早上好，很棒，周六去徒步了。" },
+        { en: "Not bad. I just stayed home and watched movies.", zh: "还不错，在家看了电影。" },
+      ] },
+      { who: "A", en: "Sounds fun! Where did you go, by the way?", zh: "咦，你去哪儿了？" },
+      { who: "B", dir: "描述那个地方（ Parks/公园/小山）", sugs: [
+        { en: "A small park by the lake. The view was amazing.", zh: "湖边的小公园，风景绝了。" },
+        { en: "Just a local trail. It's quiet and clean.", zh: "就附近的小路，安静又干净。" },
+      ] },
+      { who: "A", en: "Nice! Any plans you're thinking about for the next weekend?", zh: "下周末有什么打算？", },
+      { who: "B", dir: "说出下周末的一个大致计划", sugs: [
+        { en: "I might go camping if the weather is OK.", zh: "要是天气好,可能会去露营。" },
+        { en: "Maybe just relax. I really need some rest.", zh: "想好好休息，最近太累了。" },
+      ] },
+      { who: "A", en: "You deserve it! Let's grab coffee sometime this week.", zh: "这周找空一起喝杯咖啡吧。", },
+      { who: "B", dir: "答应邀约并约定一个时间", sugs: [
+        { en: "Sure! How about Thursday after work?", zh: "好啊！那就周四下班后？" },
+        { en: "Sounds good. Text me the time.", zh: "不错，到时发消息说时间。" },
+      ] },
+      { who: "A", en: "Deal. Now let's get back to work before the boss shows up. Haha!", zh: "成交！老板来了前抓紧干活，哈哈。", },
+      { who: "B", dir: "轻松回应并继续工作玩笑", sugs: [
+        { en: "Haha, right. Talk to you later!", zh: "哈哈，回聊。" },
+        { en: "See you at lunch break!", zh: "午休见！" },
+      ] },
+    ],
+  },
+  {
+    id: "f-grocery", name: "超市结账周边", icon: "🛒",
+    intro: "傍晚你到超市想买些生活用品，在生鲜区遇到热情的员工…",
+    lines: [
+      { who: "A", en: "Evening! Are you finding everything alright?", zh: "晚好！这里的商品您都找得到了吗？", },
+      { who: "B", dir: "说明你要找却没找到的东西", sugs: [
+        { en: "Almost, but I can't find the beef, is it near the milk?", zh: "差不多，就是牛肉没找到，是在牛奶那边吗？", },
+        { en: "Yes, but I'm not sure about checkout lane rules.", zh: "挺好的，就是不确定收银台的规矩。", },
+      ] },
+      { who: "A", en: "Beef is in aisle 5, right next to the meat counter.", zh: "牛肉在第 5 条货架，就在肉柜旁边。" },
+      { who: "B", dir: "表示感谢并问一个细节（如有无特价）", sugs: [
+        { en: "Thanks! Is the chicken on sale today?", zh: "多谢，鸡肉今天有特价吗？" },
+        { en: "Appreciated. Do you deliver orders?", zh: "谢谢，你们给送货上门吗？" },
+      ] },
+      { who: "A", en: "Yes, buy one get one free. And we deliver if it's over $30.", zh: "有，买一送一；订单超过 30 美元还包配送。" },
+      { who: "B", dir: "确认自己大概要不要送货（说预算或不需要）", sugs: [
+        { en: "That works. I'll take the beef too.", zh: "行，那牛肉也一起买。" },
+        { en: "No thanks, I only came for a few things.", zh: "不用了，我就买了点日用品。" },
+      ] },
+      { who: "A", en: "Alright. Let us know if you need a hand with anything.", zh: "有事随时喊我们。" },
+      { who: "B", dir: "客气回应并说再见", sugs: [
+        { en: "Will do. Thanks, have a good evening!", zh: "好，谢谢，晚上愉快。" },
+        { en: "Thanks so much for your help!", zh: "太感谢了！" },
+      ] },
+    ],
+  },
+  {
+    id: "f-trip", name: "制定旅行计划", icon: "🧳",
+    intro: "你和好友正在讨论下个月的短途旅行，一起翻看地图…",
+    lines: [
+      { who: "A", en: "So, where are we going for our mini trip next month?", zh: "咱们下个月去哪儿小旅行？", },
+      { who: "B", dir: "提议一个目的地（海边/山区/古镇）", sugs: [
+        { en: "How about the beach city? I miss the sea view.", zh: "去海边吧，我好想看海。" },
+        { en: "Let's pick a small town in the mountains.", zh: "去个山里的小镇怎么样？" },
+      ] },
+      { who: "A", en: "Love it! How long should we plan each stop?", zh: "选得好，-get多长时间呢，每个地点要停多久？" },
+      { who: "B", dir: "给出总天数安排（2-3天）", sugs: [
+        { en: "Let's spend two nights there, and head back Sunday night.", zh: "在那过两晚，周天晚上回来。" },
+        { en: "Just one day each stop, we travel fast.", zh: "每个地点一天，我们玩得快些。" },
+      ] },
+      { who: "A", en: "Sounds easy. Should we book flights or take the train?", zh: "那订机票还是坐火车？", },
+      { who: "B", dir: "给出交通选择和理由", sugs: [
+        { en: "The train. It's cheaper and the view is nice.", zh: "坐火车，便宜还能看风景。" },
+        { en: "Flights, to save time for the trip itself.", zh: "坐飞机，省出更多玩的时间。" },
+      ] },
+      { who: "A", en: "Alright, I'll look up hotel options and get back to you.", zh: "好，我查查酒店，回头告诉你。" },
+      { who: "B", dir: "感谢配合并分工", sugs: [
+        { en: "Thanks! I'll make the itinerary for our meals.", zh: "谢谢，那我就来安排吃饭。" },
+        { en: "Appreciated. Send me the link when you find one.", zh: "辛苦了，找好了发我链接。" },
+      ] },
+    ],
+  },
+  {
+    id: "f-hotel", name: "前台办入住", icon: "🏨",
+    intro: "你拖着行李抵达酒店，走向前台办理入住…",
+    lines: [
+      { who: "A", en: "Good afternoon! How can I help you today?", zh: "下午好，有什么能帮您？" },
+      { who: "B", dir: "说明你预订了今晚的房间", sugs: [
+        { en: "Hi, I have a reservation for tonight, under Lin.", zh: "你好，我订了今晚的房，姓林。" },
+        { en: "I'd like to check in. I booked a double room.", zh: "我想办理入住，订了间双人间。" },
+      ] },
+      { who: "A", en: "Sure, let me find your booking… OK, I need an ID to check in.", zh: "找到了您的订单，请出示证件。" },
+      { who: "B", dir: "递上证件并询问早餐", sugs: [
+        { en: "Here's my passport. Is breakfast included?", zh: "这是我的护照，含早餐吗？" },
+        { en: "Sure, here you are. What time is breakfast?", zh: "给您，早餐几点开始？" },
+      ] },
+      { who: "A", en: "Breakfast is from 7 to 10, second floor.", zh: "早餐 7 至 10 点，二楼供应。" },
+      { who: "B", dir: "再问 Wi-Fi 和押金", sugs: [
+        { en: "What's the Wi-Fi password? Is there a deposit?", zh: "Wi-Fi 密码是多少？有押金吗？" },
+        { en: "Do you charge a deposit for the room?", zh: "房间收押金吗？" },
+      ] },
+      { who: "A", en: "Wi-Fi password is on your key card. The deposit comes back when you leave.", zh: "Wi-Fi 在房卡背面；押金退房时退还。" },
+      { who: "B", dir: "道谢并收好房卡", sugs: [
+        { en: "Perfect, thank you very much!", zh: "太好了，多谢！" },
+        { en: "Great. Have a good one!", zh: "好，回见！" },
+      ] },
+    ],
+  },
+  {
+    id: "f-street", name: "街头问路", icon: "🧭",
+    intro: "你在陌生的街区找一个便利店，路边有位大爷在看报纸…",
+    lines: [
+      { who: "A", en: "You look a little lost. Anything I can help with?", zh: "看样子你迷路了？要帮忙吗？" },
+      { who: "B", dir: "说明你要去的地方", sugs: [
+        { en: "Yes, where's the nearest convenience store, please?", zh: "请问最近的便利店在哪？" },
+        { en: "I'm looking for a bank with an ATM around here.", zh: "附近有带取款机的银行吗？" },
+      ] },
+      { who: "A", en: "There's one just around the corner, next to the bus stop.", zh: "拐角就有一家，公交站旁边。" },
+      { who: "B", dir: "确认距离和营业时间", sugs: [
+        { en: "Is it within walking distance?", zh: "走过去远吗？" },
+        { en: "Do you know if it opens 24 hours?", zh: "知道它是 24 小时的吗？" },
+      ] },
+      { who: "A", en: "Two minutes' walk, and yes, it never closes.", zh: "走两分钟就到，而且 24 小时营业。" },
+      { who: "B", dir: "感谢对方", sugs: [
+        { en: "That's very helpful. Thanks a lot!", zh: "帮大忙了，多谢！" },
+        { en: "Thanks, have a nice day!", zh: "谢谢，祝您愉快！" },
+      ] },
+    ],
+  },
+  {
+    id: "f-doctor", name: "感冒看诊", icon: "🩺",
+    intro: "咳嗽好几天没好，你终于走进了社区诊所…",
+    lines: [
+      { who: "A", en: "What seems to be the problem?", zh: "哪里不舒服？" },
+      { who: "B", dir: "描述主要症状", sugs: [
+        { en: "I've had a fever and a bad cough for two days.", zh: "发烧咳嗽两天了。" },
+        { en: "My head hurts and I feel tired all the time.", zh: "头痛，人也总没劲。" },
+      ] },
+      { who: "A", en: "How many days exactly? Any other symptoms?", zh: "具体几天？还有别的症状吗？" },
+      { who: "B", dir: "补充说明天数与睡眠/胃口", sugs: [
+        { en: "Three days now. I can't sleep well at night.", zh: "三天了，夜里睡不好。" },
+        { en: "Two days, and I have no appetite.", zh: "两天，吃不下东西。" },
+      ] },
+      { who: "A", en: "It looks like a common cold. Any allergies to medicine?", zh: "像普通感冒。对药物过敏吗？" },
+      { who: "B", dir: "回答过敏史", sugs: [
+        { en: "No allergies that I know of.", zh: "目前没有发现过敏。" },
+        { en: "I'm allergic to penicillin, be careful.", zh: "我对青霉素过敏，请注意。" },
+      ] },
+      { who: "A", en: "OK, take this medicine twice a day and drink plenty of water.", zh: "早晚各一次药，多喝水。" },
+      { who: "B", dir: "追问后续并道谢", sugs: [
+        { en: "Can I still go to work? Thanks, doctor.", zh: "还能去上班吗？谢谢医生。" },
+        { en: "Should I come back if it gets worse? Thank you.", zh: "要是加重了还回来复诊吗？谢谢。" },
+      ] },
+    ],
+  },
+  {
+    id: "f-repair", name: "手机送修", icon: "📱",
+    intro: "手机屏幕摔花了，你走进一家维修小店…",
+    lines: [
+      { who: "A", en: "Hello, what's the problem with your phone?", zh: "您好，手机哪里出问题了？" },
+      { who: "B", dir: "说明手机故障", sugs: [
+        { en: "My screen is cracked and the touch is slow.", zh: "屏碎了，触控也慢。" },
+        { en: "It suddenly won't charge since today.", zh: "今天起突然没法充电。" },
+      ] },
+      { who: "A", en: "I see. How long have you had this phone?", zh: "这台用了多久了？" },
+      { who: "B", dir: "说明 使用年限 & 是否在意数据", sugs: [
+        { en: "About two years. Don't worry about my data.", zh: "两年左右，数据不用备份。" },
+        { en: "Just one year. Please back up my photos first.", zh: "才一年，请先备份照片。" },
+      ] },
+      { who: "A", en: "OK, the screen repair is about $60 and takes two hours.", zh: "修屏约 60 美元，两小时。" },
+      { who: "B", dir: "询问保修与是否可降价", sugs: [
+        { en: "Do you offer any warranty for the repair?", zh: "修理后有保修吗？" },
+        { en: "That's a bit high. Could you do $50?", zh: "有点贵，能收 50 吗？" },
+      ] },
+      { who: "A", en: "Fine. One month free fixes after repair. Deal?", zh: "修后一个月内免费返修，可以吗？" },
+      { who: "B", dir: "同意并确认取件", sugs: [
+        { en: "Deal! I'll come back before 5 pm.", zh: "成交，我 5 点前来取。" },
+        { en: "OK, call me when it's ready.", zh: "好，修好打电话给我。" },
+      ] },
+    ],
+  },
+  {
+    id: "f-mail", name: "寄快递商量", icon: "📦",
+    intro: "你要给同学寄一份文件，走进快递驿站…",
+    lines: [
+      { who: "A", en: "Hi, what are we sending today? Is it urgent?", zh: "您好，今天寄什么？急件吗？" },
+      { who: "B", dir: "说明寄什么以及时效要求", sugs: [
+        { en: "I need to mail these documents to LA, fast.", zh: "急寄文件到洛杉矶。" },
+        { en: "A small gift. No hurry, within a week is fine.", zh: "小包裹，一周内到就行。" },
+      ] },
+      { who: "A", en: "Let's weigh it. That's $9, two or three business days.", zh: "称一下，9 美元，2~3 个工作日。" },
+      { who: "B", dir: "确认时效或丢件处理", sugs: [
+        { en: "Can it get there by Thursday?", zh: "周四前能到吗？" },
+        { en: "What if the package gets lost?", zh: "万一寄丢了怎么办？" },
+      ] },
+      { who: "A", en: "By Thursday for sure, and you'll get a tracking number anyway.", zh: "周四一定到，都会给您单号。" },
+      { who: "B", dir: "同意并确认取件方式", sugs: [
+        { en: "Sounds fine. How do I track it?", zh: "怎么查件呢？" },
+        { en: "Good, please print the receipt.", zh: "好，帮我打单据。" },
+      ] },
+      { who: "A", en: "We'll text the link to your phone right after drop-off.", zh: "寄件后会短信发链接给您。" },
+      { who: "B", dir: "道谢结束", sugs: [
+        { en: "Nice, thanks! Have a good day.", zh: "好，谢谢！" },
+        { en: "I'll keep the tracking number. Thanks!", zh: "单号我收好，感谢！" },
+      ] },
+    ],
+  },
+  {
+    id: "f-work-hi", name: "工位闲聊", icon: "🧑‍💻",
+    intro: "下午刚上线一个大版本，你和同组同事在工位边喘口气…",
+    lines: [
+      { who: "A", en: "The release went live! How are you feeling?", zh: "版本上线啦！你状态如何？" },
+      { who: "B", dir: "说说此刻状态", sugs: [
+        { en: "Relieved. I can finally breathe, haha.", zh: "总算喘口气，哈哈。" },
+        { en: "A bit tired but proud of the result.", zh: "有点累，但结果不错。" },
+      ] },
+      { who: "A", en: "Get some air! By the way, did you grab lunch?", zh: "去走走透透气。你吃午饭了吗？" },
+      { who: "B", dir: "回应午饭与接下来的安排", sugs: [
+        { en: "Did, around noon. A short walk sounds great.", zh: "吃过了，想去走走散步。" },
+        { en: "Not yet, maybe a sandwich downstairs.", zh: "还没，约楼下三明治。" },
+      ] },
+      { who: "A", en: "The QA report comes tomorrow, by the way.", zh: "顺便说，测试报告明天出。" },
+      { who: "B", dir: "回应并说一个小请求", sugs: [
+        { en: "Will do. Thanks again for fixing that bug.", zh: "好，那个 bug 多谢修复。" },
+        { en: "OK by me. Could you review my doc later?", zh: "顺便您能帮看看我的文档吗？" },
+      ] },
+      { who: "A", en: "Sure thing. Let's celebrate after dinner tonight!", zh: "没问题，晚上庆祝！" },
+      { who: "B", dir: "欣然答应结束", sugs: [
+        { en: "Great! Milk tea is on me!", zh: "奶茶我请！" },
+        { en: "Sounds fun. See you later!", zh: "好，回见！" },
+      ] },
+    ],
+  },
+];
 
 /* ============ 资源夹（首页“选择资源”层）============
    后续新增资源（如 TED、新概念、自定义库）时：
@@ -1055,9 +1329,9 @@ const RESOURCES = [
   },
   {
     id: "custom",
-    name: "我的自定义语料",
+    name: "我的自定义对话",
     icon: "✍️",
-    desc: "输入日常想说的中文，一键生成地道美式表达（可编辑）",
+    desc: "中文输入自动翻译，也可直接手写英文对话",
     sceneIds: ["custom"],
   },
 ];
