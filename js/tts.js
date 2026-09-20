@@ -35,10 +35,56 @@ const TTS = (() => {
     return chosen;
   }
 
+  function normalizeSpeechText(text) {
+    const digits = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+    const sContractionHosts = new Set(["he", "she", "it", "that", "this", "there", "here", "what", "who", "where", "when", "why", "how", "let"]);
+    const pastParticiples = new Set([
+      "been", "become", "begun", "bought", "brought", "built", "caught", "come", "cut", "done", "drunk", "driven",
+      "eaten", "fallen", "felt", "found", "given", "gone", "grown", "heard", "held", "kept", "known", "left", "lost",
+      "made", "met", "paid", "put", "read", "run", "said", "seen", "sent", "shown", "slept", "spoken", "spent",
+      "stood", "taken", "taught", "thought", "told", "understood", "won", "worn", "written",
+    ]);
+    const followingWord = (source, offset) => {
+      const match = source.slice(offset).match(/^\s+(?:(?:already|just|never|ever|recently|always|finally|still)\s+)*([A-Za-z]+)/i);
+      return match ? match[1].toLowerCase() : "";
+    };
+    const followsPastParticiple = (source, offset) => {
+      const word = followingWord(source, offset);
+      return word === "better" || pastParticiples.has(word) || /ed$/.test(word);
+    };
+    const canonical = String(text || "")
+      .replace(/&(?:apos|#39|#x27|rsquo|lsquo);/gi, "'")
+      .replace(/[\u0060\u00B4\u02BB\u02BC\u2018\u2019\u201B\u2032\uFF07]/g, "'")
+      .replace(/[\u00A0\u2007\u202F\u200B-\u200D\uFEFF]/g, " ")
+      // 只整理单词内部的撇号，保留 Don't / that's / I've 等自然缩略形式。
+      .replace(/([A-Za-z])\s*'\s*(?=[A-Za-z])/g, "$1'");
+    return canonical
+      // 页面保留缩略形式；朗读副本展开助动词，避免不同设备吞掉 /l/、/v/ 等尾音。
+      .replace(/\b([A-Za-z]+)'ll\b/gi, "$1 will")
+      .replace(/\b([A-Za-z]+)'ve\b/gi, "$1 have")
+      .replace(/\b([A-Za-z]+)'re\b/gi, "$1 are")
+      .replace(/\b([A-Za-z]+)'m\b/gi, "$1 am")
+      .replace(/\blet's\b/gi, word => /^[A-Z]/.test(word) ? "Let us" : "let us")
+      .replace(/\b([A-Za-z]+)'d\b/gi, (full, subject, offset, source) => {
+        return `${subject} ${followsPastParticiple(source, offset + full.length) ? "had" : "would"}`;
+      })
+      .replace(/\b([A-Za-z]+)'s\b/gi, (full, subject, offset, source) => {
+        if (!sContractionHosts.has(subject.toLowerCase())) return full;
+        return `${subject} ${followsPastParticiple(source, offset + full.length) ? "has" : "is"}`;
+      })
+      // 否定缩略语按自然形式朗读，不展开成 do not / cannot。
+      .replace(/\b([A-Za-z]+n't)\b(?=\s+[A-Za-z])/gi, "$1,")
+      // 七位及以上、可能带 X 的号码按位朗读，避免被语音引擎当成一个大数。
+      .replace(/\b[0-9Xx]{7,}\b/g, number => number.split("").map(char => {
+        return /\d/.test(char) ? digits[Number(char)] : "X";
+      }).join(" "));
+  }
+
   function speak(text, lang, rate) {
     return new Promise(resolve => {
       if (!("speechSynthesis" in window)) return resolve();
       if (stopped || !text) return resolve();
+      text = normalizeSpeechText(text);
       // 语言混合切分：数字 10 / 语气词 嗯 之类，交给各自语言的音库读，避免中文音库读出"十"、英文音库把"嗯"拼成字母
       const runs = [];
       let curRun = null;

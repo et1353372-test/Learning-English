@@ -1,6 +1,6 @@
 /* Service Worker：网络优先 → 永远先用最新版；断网时用缓存兜底（地铁无网也能练）
    v3：新增 jsdelivr 大文件（CMU 音标库）缓存——首次下载 3.6MB，之后永久秒开 */
-const CACHE = "oral-app-v7";
+const CACHE = "oral-app-v13";
 const ASSETS = [
   "./", "./index.html", "./manifest.webmanifest", "./icon.svg",
   "./css/style.css",

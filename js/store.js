@@ -40,6 +40,10 @@ const Store = (() => {
       state.recent = state.recent.slice(0, 8);
       save();
     },
+    clearRecent() {
+      state.recent = [];
+      save();
+    },
     addLearnSeconds(sec) {
       state.stats.totalSeconds += sec;
       state.lastPractice = new Date().toDateString();

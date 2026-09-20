@@ -5,8 +5,18 @@ let currentTab = "home";
 let stateStack = []; // 页面返回栈 {fn, arg}
 let learnTimer = null; // 学习时长计时
 let pageAudio = []; // 复盘用音频对象
+let appHistoryReady = false;
 
-function pushView(fn, arg) { stateStack.push({ fn: viewFn, arg: viewArg }); viewFn = fn; viewArg = arg; render(); }
+function restorePreviousView() {
+  if (!stateStack.length) { viewFn = renderHome; viewArg = null; }
+  else { const p = stateStack.pop(); viewFn = p.fn; viewArg = p.arg; }
+  render();
+}
+function pushView(fn, arg) {
+  stateStack.push({ fn: viewFn, arg: viewArg });
+  if (appHistoryReady) history.pushState({ oralApp: true }, "");
+  viewFn = fn; viewArg = arg; render();
+}
 let viewFn = renderHome, viewArg = null;
 function render() {
   TTS.cancelled = true; TTS.stop();
@@ -27,9 +37,22 @@ function updateTabbar() {
   document.querySelectorAll('.tab[data-tab="review"] .tab-icon').forEach(i => i.innerHTML = "🔁" + (n ? `<span class="review-badge">${n}</span>` : ""));
 }
 function goBack() {
-  if (!stateStack.length) { viewFn = renderHome; viewArg = null; }
-  else { const p = stateStack.pop(); viewFn = p.fn; viewArg = p.arg; }
-  render();
+  if (appHistoryReady && stateStack.length) { history.back(); return; }
+  restorePreviousView();
+}
+function setupAppHistory() {
+  if (!("history" in window) || !("pushState" in history)) return;
+  const rootState = { oralApp: true, root: true };
+  try {
+    history.replaceState(rootState, "");
+    history.pushState(rootState, "");
+    appHistoryReady = true;
+    window.addEventListener("popstate", () => {
+      if (stateStack.length) { restorePreviousView(); return; }
+      history.pushState(rootState, "");
+      if (viewFn !== renderHome) restorePreviousView();
+    });
+  } catch (e) { appHistoryReady = false; }
 }
 /* 动态资源列表：内置 + 用户上传解析出来的 */
 function allResList() {
@@ -79,9 +102,35 @@ function delUpload(sceneId) {
   toast("已删除"); currentTab = "home"; stateStack = []; viewFn = renderHome; viewArg = null; render();
 }
 /* 话题 → 直达听读 */
+function syncUserContentScenes() { syncCustomScene(); syncReadingsScene(); syncUploadScenes(); }
+function rememberTopic(topicId) {
+  syncUserContentScenes();
+  const f = findTopic(topicId);
+  if (f) Store.addRecent(topicId, f.scene.id);
+  return f;
+}
 function openScene(sceneId) { syncUploadScenes(); pushView(renderScene, sceneId); }
-function openTopic(topicId) { syncCustomScene(); syncReadingsScene(); syncUploadScenes(); const f = findTopic(topicId); if (f) { Store.addRecent(topicId, f.scene.id); Store.save(); } pushView(renderListen, topicId); }
+function openTopic(topicId) { if (rememberTopic(topicId)) pushView(renderListen, topicId); }
+/* 兼容已经保存到本机的旧上传资源：仅修复导入残留字符，不改自定义对话。 */
+function repairStoredUploadDialogLines() {
+  const uploads = Store.get().uploads || [];
+  let changed = false;
+  uploads.forEach(upload => (upload.topics || []).forEach(topic => (topic.dialogs || []).forEach(dialog => {
+    (dialog.lines || []).forEach(line => {
+      const bilingual = splitImportedDialogBilingualLine(line.en || "");
+      const en = bilingual.en;
+      const zh = cleanImportedDialogText(line.zh || "") || bilingual.zh;
+      if (line.en !== en || line.zh !== zh) {
+        line.en = en;
+        line.zh = zh;
+        changed = true;
+      }
+    });
+  })));
+  if (changed) Store.saveUploads(uploads);
+}
 function syncUploadScenes() {
+  repairStoredUploadDialogLines();
   (Store.get().uploads || []).forEach(u => {
     let s = SCENES.find(x => x.id === u.sceneId);
     if (!s) { s = { id: u.sceneId, name: u.name, icon: u.icon, desc: u.desc, topics: [] }; SCENES.push(s); }
@@ -119,7 +168,15 @@ function markToday() {
   st.lastPractice = new Date().toDateString();
   Store.save(); toast(`🎉 今日打卡成功，已坚持 ${checkinCount()} 天`);
 }
+function clearRecentPractice() {
+  if (!Store.get().recent.length) return;
+  if (!confirm("确定清空最近练习吗？不会删除资源、收藏或学习记录。")) return;
+  Store.clearRecent();
+  toast("已清空最近练习");
+  renderHome();
+}
 function renderHome() {
+  syncUserContentScenes();
   const st = Store.get();
   const favN = Object.keys(st.favs).length;
   const wordN = Object.keys(st.wordbook).length;
@@ -169,7 +226,7 @@ function renderHome() {
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">上传 txt / md / pdf 英语文章，自动分段成可听读的内容（英文原声 / 中文 / 中英对照，无角色扮演）</div>
       <button class="btn-primary" style="width:100%;padding:12px;border:none;border-radius:12px;background:#39b983;color:#fff;font-weight:700;font-size:15px;cursor:pointer;" id="readingBtn">📚 进入阅读练习</button>
     </div>
-    <div class="section-title">🕘 最近练习<span class="more" onclick="currentTab='home';viewFn=renderSceneAll;viewArg=null;render()">全部 ›</span></div>
+    <div class="section-title">🕘 最近练习<span class="more" id="clearRecentBtn" style="margin-right:10px">清空</span><span class="more" onclick="currentTab='home';viewFn=renderSceneAll;viewArg=null;render()">全部 ›</span></div>
     <div class="card" style="padding:6px 12px;">${recentHtml || `<div class="empty-block" style="padding:20px;">还没有练习记录，先去首页挑个话题吧</div>`}</div>`;
   window.__wb = wordBookPage;
   $("#freeBtn").onclick = () => {
@@ -180,6 +237,7 @@ function renderHome() {
     pushView(renderFreeRun, sc);
   };
   $("#readingBtn").onclick = () => openReading();
+  $("#clearRecentBtn").onclick = clearRecentPractice;
   $("#addResBtn").onclick = () => $("#resFile").click();
   $("#resFile").onchange = e => handleUploadResourceFile(e.target.files[0]);
 }
@@ -239,7 +297,7 @@ async function translateUploadResource(res) {
 }
 /* 添加对话资源专用：保留缩略形式，只清理文件中多余的转义与空格。 */
 function cleanImportedDialogText(text) {
-  return String(text || "").replace(/[\u0000-\u001F\u007F-\u009F\u25A1\uFFFD]/g, " ").replace(/\\/g, "").replace(/\s+([,.;!?])/g, "$1").replace(/\s+/g, " ").trim();
+  return String(text || "").replace(/[\p{Cc}\p{Cf}\u25A1\uFFFD]/gu, " ").replace(/\uFF07/g, "'").replace(/\\/g, "").replace(/\s+([,.;!?])/g, "$1").replace(/\s+/g, " ").trim();
 }
 function isImportedDialogMetadata(text) {
   return /^(?:适用难度|内容特点|使用方式|难度|说明|作者|来源)\s*[:：]/.test(text);
@@ -247,13 +305,13 @@ function isImportedDialogMetadata(text) {
 function splitImportedDialogBilingualLine(text) {
   const clean = cleanImportedDialogText(text);
   const parenthesized = clean.match(/^(.*?)[（(]\s*([\u3400-\u9fff][^）)]*)\s*[）)]\s*$/);
-  const withoutNumber = value => value.trim().replace(/^\d{1,3}\s*[.、:：]\s*/, "");
+  const withoutNumber = value => value.trim().replace(/^\d{1,3}\s*[.、:：]\s*/, "").replace(/[（(][\s\u200B-\u200D\uFEFF]*$/, "").trim();
   if (parenthesized) return { en: withoutNumber(parenthesized[1]), zh: parenthesized[2].trim() };
   const chineseIndex = clean.search(/[\u3400-\u9fff]/);
   if (chineseIndex > 0 && /[A-Za-z]/.test(clean.slice(0, chineseIndex))) {
     return { en: withoutNumber(clean.slice(0, chineseIndex)), zh: clean.slice(chineseIndex).trim() };
   }
-  return { en: clean, zh: "" };
+  return { en: withoutNumber(clean), zh: "" };
 }
 function isNumberedImportedDialogSentence(line) {
   const numbered = cleanImportedDialogText(line).match(/^\d{1,3}\s*[.、:：]\s*(.+)$/);
@@ -474,7 +532,7 @@ function renderTopic(topicId) {
 
 /* ---------- 模式A：听读学习 ---------- */
 function renderListen(topicId) {
-  const f = findTopic(topicId); const { topic, scene } = f;
+  const f = rememberTopic(topicId); if (!f) return renderHome(); const { topic, scene } = f;
   const lines = (topic.dialogs && topic.dialogs[0]) ? topic.dialogs[0].lines : topic.sentences;
   const tIdx = scene.topics.findIndex(t => t.id === topicId);
   let idx = 0, version = "en", loopAll = false, playing = false;
@@ -1809,4 +1867,5 @@ TTS.refresh && window.speechSynthesis && TTS.refresh();
 setupPhraseSelection();
 syncCustomScene();
 syncReadingsScene();
+setupAppHistory();
 render();
