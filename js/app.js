@@ -1062,6 +1062,69 @@ function evaluateFreeResponse(answer, prompt, suggestions) {
   if (!feedback.length) feedback.push("回答完整、切题，表达自然。");
   return { score, relevance, completeness, naturalness, feedback };
 }
+function adaptiveTimePhrase(answer) {
+  const match = (answer || "").match(/\b(?:today|tomorrow|tonight)(?:\s+(?:morning|afternoon|evening|night))?|\b(?:this|next)\s+(?:morning|afternoon|evening|week|weekend)|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+(?:morning|afternoon|evening))?|\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?\b/i);
+  if (!match) return "";
+  const phrase = match[0].trim();
+  return phrase ? phrase[0].toUpperCase() + phrase.slice(1) : "";
+}
+function adaptiveFollowUpForDirection(line) {
+  const dir = normalizeFreeScoreText(line && line.dir);
+  if (/(time|when|schedule|arrival|时间|什么时候|到达|安排|约定|营业)/.test(dir)) {
+    return { en: "What time would work best for you?", zh: "什么时间最适合你？" };
+  }
+  if (/(where|place|location|地点|地方|目的地|去哪|去的地方)/.test(dir)) {
+    return { en: "Where would be most convenient for you?", zh: "哪里对你最方便？" };
+  }
+  if (/(why|reason|理由|原因)/.test(dir)) {
+    return { en: "What makes you say that?", zh: "你为什么这么说？" };
+  }
+  if (/(choose|choice|prefer|whether|选择|是否|要不要|同意|确认)/.test(dir)) {
+    return { en: "Which option would you prefer?", zh: "你更倾向于哪个选择？" };
+  }
+  if (/(plan|next|安排|下一步|计划|分工)/.test(dir)) {
+    return { en: "What would you like to do next?", zh: "你接下来想怎么做？" };
+  }
+  return { en: "Could you tell me a little more about that?", zh: "你能再多说一点吗？" };
+}
+function isAdaptiveAnswerTooShort(answer) {
+  const normalized = normalizeFreeScoreText(answer).replace(/[.!?]+$/, "");
+  const words = freeScoreWords(answer, true);
+  return words.length <= 1 || /^(maybe|not sure|i don't know|i do not know|no idea)$/.test(normalized);
+}
+function buildAdaptivePartnerLine(answer, prompt, originalLine, nextLearnerLine) {
+  const text = (answer || "").trim();
+  if (isAdaptiveAnswerTooShort(text)) {
+    return { who: "A", en: "I understand. Could you tell me a little more?", zh: "我明白了。你能再多说一点吗？", adaptive: true };
+  }
+  const time = adaptiveTimePhrase(text);
+  let acknowledgement;
+  let acknowledgementZh;
+  if (time) {
+    acknowledgement = `${time} sounds good.`;
+    acknowledgementZh = `${time === "Tomorrow afternoon" ? "明天下午" : "这个时间"}听起来不错。`;
+  } else if (/^(yes|yeah|sure|of course|definitely|sounds good)\b/i.test(text)) {
+    acknowledgement = "Great, thanks for confirming.";
+    acknowledgementZh = "太好了，感谢你的确认。";
+  } else if (/^(no|not really|i can't|i cannot|i don't|i do not)\b/i.test(text)) {
+    acknowledgement = "I understand. Let's look at another option.";
+    acknowledgementZh = "我明白了。我们换个选择看看。";
+  } else if (/\b(because|since)\b/i.test(text)) {
+    acknowledgement = "Thanks for explaining that.";
+    acknowledgementZh = "谢谢你的说明。";
+  } else if (/\b(like|love|prefer|would rather|want)\b/i.test(text)) {
+    acknowledgement = "That makes sense.";
+    acknowledgementZh = "这很合理。";
+  } else if (/\b(at|in|near|home|office|airport|hotel|restaurant|store|school|station|downtown)\b/i.test(text)) {
+    acknowledgement = "That location sounds convenient.";
+    acknowledgementZh = "那个地点听起来很方便。";
+  } else {
+    acknowledgement = "Thanks for sharing that.";
+    acknowledgementZh = "谢谢你的分享。";
+  }
+  const followUp = adaptiveFollowUpForDirection(nextLearnerLine || originalLine || { dir: "" });
+  return { who: "A", en: `${acknowledgement} ${followUp.en}`, zh: `${acknowledgementZh}${followUp.zh}`, adaptive: true };
+}
 function scoreFreeSession(turns) {
   const contentTurns = (turns || []).map(turn => {
     if (turn && turn.answerEvaluation && Number.isFinite(turn.answerEvaluation.score)) return turn.answerEvaluation.score;
@@ -1095,10 +1158,15 @@ function renderFreeRun(scRaw) {
   const sc = JSON.parse(JSON.stringify(scRaw)); // 拷贝一份，避免 _shown 状态污染
   let i = 0; const userTurns = []; // 记录每轮表现 {type:'mic'|'sug'|'skip', sugIndex?}
   const recUrls = []; let recording = false;
+  let pendingAdaptiveLine = null;
+  let currentPartnerPrompt = "";
   viewEl.innerHTML = `<div class="page-header back-top">
     <button class="back-btn" onclick="goBack()">‹</button>
     <div style="flex:1"><div class="page-title">🎲 即兴对话 · ${sc.name}</div><div class="page-sub">${sc.intro}</div></div>
-    <button id="freeAgainBtn" class="chip on" title="切换到新的一场对话" style="flex-shrink:0">🎲 再来一场</button>
+    <div style="display:flex;gap:5px;flex-shrink:0">
+      <button id="freeContinueBtn" class="chip on" title="随机切换到另一场对话" style="font-size:12px">🎲 继续练习</button>
+      <button id="freeRetryBtn" class="chip" title="从头练习当前对话" style="font-size:12px">🔄 重新练习</button>
+    </div>
   </div>` + `
     <div class="chip-row" style="justify-content:flex-start;margin-bottom:10px;"><span class="chip on">共 ${sc.lines.length} 轮</span><span class="chip" id="freeTurn"></span></div>
     <div id="stage"></div>
@@ -1106,12 +1174,13 @@ function renderFreeRun(scRaw) {
     <div class="stage-actions" id="actions"></div>
     <div id="endBox"></div>
     <div style="height:12px"></div>`;
-  $("#freeAgainBtn").onclick = () => {
+  $("#freeContinueBtn").onclick = () => {
     const pool = allFreeScenarios().filter(s => s.id !== sc.id);
     const s2 = pool[Math.floor(Math.random() * pool.length)];
     lastFreeId = s2.id;
     pushView(renderFreeRun, s2);
   };
+  $("#freeRetryBtn").onclick = () => renderFreeRun(scRaw);
   function bubble(who, text, zh, user, rec) {
     const div = document.createElement("div");
     div.className = user ? "bubble user" : "bubble";
@@ -1137,8 +1206,7 @@ function renderFreeRun(scRaw) {
     return html;
   }
   function showUserTurn(l) {
-    const partnerLine = sc.lines.slice(0, i).reverse().find(line => line.who === "A");
-    const prompt = partnerLine ? partnerLine.en : "";
+    const prompt = currentPartnerPrompt;
     $("#freeTurn").textContent = "第 " + (i + 1) + "/" + sc.lines.length + " 轮";
     $("#actions").innerHTML = `
       <button class="btn-primary" id="turnMic">🎤 我说</button>
@@ -1171,21 +1239,64 @@ function renderFreeRun(scRaw) {
           });
           div = bubble("B", "（未转写到英文文本）", freeAsrFailureMessage(recognition.error), true, rec.url);
         }
-        doneTurn();
+        doneTurn(transcript);
       };
     };
     $("#turnType").onclick = () => {
       $("#hintBox").innerHTML = `
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">⌨️ 打出你想说的英文（将按是否切题、完整和自然评分）：</div>
-        <input id="typeIn" placeholder="Type your English here…" style="width:100%;padding:10px;border:1.5px solid #e3e6ef;border-radius:10px;font-size:14px;">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">⌨️ 在英文框输入后可直接提交；不会时可先在中文框翻译。</div>
+        <label for="typeEn" style="display:block;margin-bottom:4px;font-size:12px;font-weight:700;color:var(--text)">🇺🇸 英文</label>
+        <input id="typeEn" placeholder="Type your English here…" style="width:100%;padding:10px;border:1.5px solid #e3e6ef;border-radius:10px;font-size:14px;box-sizing:border-box;">
+        <label for="typeZh" style="display:block;margin:9px 0 4px;font-size:12px;font-weight:700;color:var(--text)">🇨🇳 中文（可选）</label>
+        <div style="display:flex;gap:7px">
+          <input id="typeZh" placeholder="输入中文后点击翻译" style="min-width:0;flex:1;padding:10px;border:1.5px solid #e3e6ef;border-radius:10px;font-size:14px;box-sizing:border-box;">
+          <button class="btn-ghost" id="typeTranslate" style="flex:0 0 auto;padding:10px 12px">翻译为英文</button>
+        </div>
+        <div id="typeError" style="min-height:17px;margin-top:5px;font-size:12px;color:var(--warn)"></div>
         <button class="btn-primary" id="typeGo" style="width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:var(--primary);color:#fff;font-weight:700;cursor:pointer;">说这句 →</button>`;
+      $("#typeTranslate").onclick = async () => {
+        const chineseInput = $("#typeZh");
+        const englishInput = $("#typeEn");
+        const button = $("#typeTranslate");
+        const error = $("#typeError");
+        const chinese = chineseInput.value.trim();
+        if (!chinese) return toast("还没输入中文内容");
+        button.disabled = true;
+        button.textContent = "⏳ 翻译中…";
+        const answer = await resolveFreeTypedAnswer(chinese);
+        button.disabled = false;
+        button.textContent = "翻译为英文";
+        if (answer.error) {
+          error.textContent = "暂时无法把中文译成英文，请检查网络后重试。";
+          chineseInput.focus();
+          return;
+        }
+        englishInput.value = answer.english;
+        error.textContent = "已翻译到英文框，可检查后点击“说这句”。";
+        englishInput.focus();
+      };
       $("#typeGo").onclick = async () => {
-        const txt = $("#typeIn").value.trim();
-        if (!txt) return toast("先输入一句英文");
-        userTurns.push({ type: "typed", answer: txt, answerEvaluation: evaluateFreeResponse(txt, prompt, l.sugs) });
-        const div = bubble("B", txt, "翻译中…", true, null);
-        try { const zh = await mtZh(txt); if (zh) { const zhEl = div.querySelector(".bubble-zh"); if (zhEl) zhEl.textContent = zh; } } catch (e) { }
-        doneTurn();
+        const input = $("#typeEn");
+        const button = $("#typeGo");
+        const error = $("#typeError");
+        const english = input.value.trim();
+        const chinese = $("#typeZh").value.trim();
+        if (!english) return toast("还没输入英文对话");
+        if (isChineseText(english)) {
+          error.textContent = "请在下方中文框输入中文并点击“翻译为英文”。";
+          input.focus();
+          return;
+        }
+        button.disabled = true;
+        userTurns.push({
+          type: "typed", answer: english, sourceAnswer: chinese,
+          answerEvaluation: evaluateFreeResponse(english, prompt, l.sugs),
+        });
+        const div = bubble("B", english, chinese || "翻译中…", true, null);
+        if (!chinese) {
+          try { const zh = await mtZh(english); if (zh) { const zhEl = div.querySelector(".bubble-zh"); if (zhEl) zhEl.textContent = zh; } } catch (e) { }
+        }
+        doneTurn(english);
       };
     };
     $("#turnHint").onclick = () => {
@@ -1195,7 +1306,7 @@ function renderFreeRun(scRaw) {
         const s = l.sugs[+b.dataset.sug];
         userTurns.push({ type: "sug", en: s.en, answerEvaluation: { score: 40, feedback: ["本轮使用了参考说法。"] } });
         bubble("B", s.en, s.zh, true, null);
-        doneTurn();
+        doneTurn(s.en);
       });
     };
     $("#turnSkip").onclick = () => {
@@ -1203,8 +1314,13 @@ function renderFreeRun(scRaw) {
       bubble("B", "（跳过这轮）", "", true, null); doneTurn();
     };
   }
-  function doneTurn() {
+  function doneTurn(answer) {
     $("#hintBox").innerHTML = ""; $("#actions").innerHTML = "";
+    const nextPartner = sc.lines[i + 1];
+    const nextLearner = sc.lines[i + 2];
+    pendingAdaptiveLine = answer && nextPartner && nextPartner.who === "A" && nextLearner && nextLearner.who === "B"
+      ? buildAdaptivePartnerLine(answer, currentPartnerPrompt, nextPartner, nextLearner)
+      : null;
     i++;
     step();
   }
@@ -1212,8 +1328,11 @@ function renderFreeRun(scRaw) {
     TTS.cancelled = true; TTS.stop();
     $("#freeTurn") && ($("#freeTurn").textContent = "第 " + (i + 1) + "/" + sc.lines.length + " 轮");
     if (i >= sc.lines.length) return endFree();
-    const l = sc.lines[i];
+    const sourceLine = sc.lines[i];
+    const l = pendingAdaptiveLine && sourceLine.who === "A" ? pendingAdaptiveLine : sourceLine;
     if (l.who === "A") {
+      pendingAdaptiveLine = null;
+      currentPartnerPrompt = l.en;
       bubble("A", l.en, l.zh, false, null);
       $("#hintBox").innerHTML = `<div style="font-size:13px;color:var(--muted)">🔊 对方在说…</div>`;
       $("#actions").innerHTML = "";
@@ -1979,6 +2098,19 @@ async function mtTranslate(line) {  try {
     if (!/[.!?]$/.test(t)) t += t.includes("?") ? "?" : ".";
     return t;
   } catch (e) { return null; }
+}
+
+function isChineseText(text) {
+  return /[\u3400-\u9fff]/.test(text || "");
+}
+async function resolveFreeTypedAnswer(rawText) {
+  const source = (rawText || "").trim();
+  if (!isChineseText(source)) return { english: source, zh: null, translated: false, error: "" };
+  const english = await mtTranslate(source);
+  if (!english || isChineseText(english)) {
+    return { english: "", zh: source, translated: true, error: "translation-unavailable" };
+  }
+  return { english, zh: source, translated: true, error: "" };
 }
 
 /* ---------- 版本 & 缓存自更新 ---------- */
