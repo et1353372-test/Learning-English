@@ -16,6 +16,7 @@ const Recorder = (() => {
         url = URL.createObjectURL(blob);
         const sec = Math.round((Date.now() - (media._t0 || Date.now())) / 1000);
         stream.getTracks().forEach(t => t.stop());
+        stream = null;
         resolve({ url, blob, seconds: sec });
       };
       if (media.state !== "inactive") media.stop(); else media.onstop();

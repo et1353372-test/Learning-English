@@ -39,6 +39,41 @@ const MORE_DIALOG_SEEDS = [
   ["more-36", "兄妹拌嘴", "🚘", "兄妹出门前因时间安排发生小争执。", "Come on, it’s time to go!", "快点，该走了！", "Wait a minute. I’m not ready yet.", "等一下，我还没准备好。", "I can give you five more minutes.", "我再给你五分钟。", "Okay, I’ll hurry. Thanks for waiting.", "好，我会快点。谢谢你等我。"],
 ];
 
+const MORE_SERVICE_SCENARIO_IDS = new Set([
+  "more-04", "more-06", "more-07", "more-14", "more-16",
+  "more-21", "more-24", "more-27", "more-29", "more-32",
+]);
+const MORE_PLAN_SCENARIO_IDS = new Set([
+  "more-03", "more-05", "more-08", "more-09", "more-12", "more-18",
+  "more-19", "more-20", "more-22", "more-23", "more-25", "more-26",
+  "more-28", "more-31", "more-33", "more-34", "more-35", "more-36",
+]);
+
+function moreScenarioTail(id) {
+  const kind = MORE_SERVICE_SCENARIO_IDS.has(id) ? "service" : MORE_PLAN_SCENARIO_IDS.has(id) ? "plan" : "social";
+  const tails = {
+    service: [
+      ["Before we finish, is there anything else you need?", "在结束前，您还有其他需要吗？", "确认是否还有其他需求", "No, that covers everything. Thank you for your help.", "没有了，这些就够了。谢谢您的帮助。"],
+      ["You're welcome. Please let us know if you have any other questions.", "不客气，如有其他问题请告诉我们。", "礼貌回应并结束办理", "I will. Have a good day.", "好的。祝您今天愉快。"],
+      ["You too. Take care.", "您也是，保重。", "礼貌道别", "Goodbye.", "再见。"],
+    ],
+    plan: [
+      ["That sounds good. Is there anything we should do before then?", "听起来不错。在那之前我们要做什么吗？", "确认下一步准备", "I'll get it ready and send you an update.", "我会准备好并给你发消息更新。"],
+      ["Perfect. Please let me know if the plan changes.", "太好了。如果计划有变请告诉我。", "确认保持沟通", "Of course. I'll keep you posted.", "当然，我会随时告知你。"],
+      ["Great. Talk to you soon.", "很好，稍后联系。", "自然结束对话", "Talk to you soon.", "稍后联系。"],
+    ],
+    social: [
+      ["That sounds nice. What would you like to do next?", "听起来不错。接下来你想做什么？", "自然提出下一步", "Let's keep it simple and enjoy the rest of the day.", "我们简单安排一下，好好享受今天剩下的时间吧。"],
+      ["I like that idea. We can decide the details later.", "我喜欢这个主意。细节以后再定。", "赞同并延续话题", "Sounds good to me.", "我觉得不错。"],
+      ["Great. I'll see you soon.", "太好了，待会见。", "自然道别", "See you soon.", "待会见。"],
+    ],
+  };
+  return tails[kind].flatMap(([aEn, aZh, dir, bEn, bZh]) => [
+    { who: "A", en: aEn, zh: aZh },
+    { who: "B", dir, sugs: [{ en: bEn, zh: bZh }] },
+  ]);
+}
+
 function makeMoreScenario(seed) {
   const [id, name, icon, intro, a1, a1Zh, b1, b1Zh, a2, a2Zh, b2, b2Zh] = seed;
   return {
@@ -48,7 +83,7 @@ function makeMoreScenario(seed) {
       { who: "B", dir: "自然回应对方，并补充一个相关信息或问题", sugs: [{ en: b1, zh: b1Zh }] },
       { who: "A", en: a2, zh: a2Zh },
       { who: "B", dir: "确认信息、表达需求或给出下一步回应", sugs: [{ en: b2, zh: b2Zh }] },
-    ],
+    ].concat(moreScenarioTail(id)),
   };
 }
 

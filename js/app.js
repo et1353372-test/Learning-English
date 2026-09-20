@@ -899,37 +899,197 @@ function setupPhraseSelection() {
 
 /* ---------- 随机即兴对话练习 ---------- */
 let lastFreeId = null;
+const BASE_FREE_SCENARIO_TAILS = {
+  "f-grocery": [
+    { who: "A", en: "The checkout is at the front. Do you need help finding anything else?", zh: "收银台在前面。还需要我帮您找别的东西吗？" },
+    { who: "B", dir: "确认已经买齐并再次道谢", sugs: [{ en: "No, I'm all set. Thanks again for your help.", zh: "不用了，我都买齐了。再次谢谢你的帮助。" }] },
+  ],
+  "f-trip": [
+    { who: "A", en: "Great. Let's confirm the dates tonight so we can book everything.", zh: "太好了。今晚确认日期，这样我们就能把东西都订好。" },
+    { who: "B", dir: "同意并说明会确认时间", sugs: [{ en: "Perfect. I'll check my schedule and message you tonight.", zh: "太好了。我会看看日程，今晚发消息给你。" }] },
+  ],
+  "f-hotel": [
+    { who: "A", en: "You're welcome. Your room is on the fifth floor. Enjoy your stay.", zh: "不客气。您的房间在五楼，祝您入住愉快。" },
+    { who: "B", dir: "确认并礼貌结束入住", sugs: [{ en: "Great. I'll head up now. Thanks again.", zh: "太好了。我现在就上去，再次感谢。" }] },
+  ],
+  "f-street": [
+    { who: "A", en: "The store is on the left, so you can't miss it.", zh: "商店在左边，你不会错过的。" },
+    { who: "B", dir: "确认路线并再次感谢", sugs: [{ en: "Got it. I'll look for it on the left. Thanks again.", zh: "明白了，我会在左边找。再次感谢。" }] },
+    { who: "A", en: "No problem. I hope you find what you need.", zh: "不客气。希望你能找到需要的东西。" },
+    { who: "B", dir: "礼貌道别", sugs: [{ en: "I'm sure I will. Have a great day.", zh: "我相信能找到。祝你今天愉快。" }] },
+  ],
+  "f-doctor": [
+    { who: "A", en: "If your symptoms get worse, please come back or call the clinic.", zh: "如果症状加重，请回来复诊或打电话给诊所。" },
+    { who: "B", dir: "确认医嘱并道谢", sugs: [{ en: "I will. Thank you for the advice, doctor.", zh: "我会的。谢谢您的建议，医生。" }] },
+  ],
+  "f-repair": [
+    { who: "A", en: "We'll send you a message as soon as the repair is finished.", zh: "维修完成后我们会马上给您发消息。" },
+    { who: "B", dir: "确认联系方式并道谢", sugs: [{ en: "That works for me. Thanks, I'll wait for your message.", zh: "这样很好，谢谢，我会等你的消息。" }] },
+  ],
+  "f-mail": [
+    { who: "A", en: "Please keep the receipt until the package arrives.", zh: "请保留收据，直到包裹送达。" },
+    { who: "B", dir: "确认会保留收据并结束", sugs: [{ en: "I will. Thanks for explaining everything.", zh: "我会的。谢谢你解释得这么清楚。" }] },
+  ],
+  "f-work-hi": [
+    { who: "A", en: "It's a plan. Let's finish a few things before we celebrate.", zh: "就这么定了。庆祝前先把几件事做完。" },
+    { who: "B", dir: "轻松回应并确认稍后见", sugs: [{ en: "Absolutely. I'll wrap up my work and see you later.", zh: "当然。我收尾工作后就去见你。" }] },
+  ],
+};
 function allFreeScenarios() {
-  return FREE_SCENARIOS.concat(typeof MORE_FREE_SCENARIOS === "undefined" ? [] : MORE_FREE_SCENARIOS);
+  const base = FREE_SCENARIOS.map(scene => {
+    const tail = BASE_FREE_SCENARIO_TAILS[scene.id] || [];
+    return tail.length ? { ...scene, lines: scene.lines.concat(tail) } : scene;
+  });
+  return base.concat(typeof MORE_FREE_SCENARIOS === "undefined" ? [] : MORE_FREE_SCENARIOS);
 }
-/* 浏览器语音识别（Chrome 内置，走谷歌服务器；不可用时静默降级） */
+function freeAsrFailureMessage(error) {
+  const messages = {
+    "not-allowed": "浏览器没有获得麦克风或语音转写权限。",
+    "service-not-allowed": "浏览器当前不允许使用语音转写服务。",
+    "no-speech": "没有检测到可识别的英文语音。",
+    "network": "浏览器语音转写服务暂时不可用，请检查网络后重试。",
+    "language-not-supported": "当前浏览器不支持英文语音转写。",
+    "unsupported": "当前浏览器不支持语音转写，请改用键入。",
+    "timeout": "语音转写等待超时，请再试一次或改用键入。",
+  };
+  return messages[error] || "浏览器没有返回可用的英文转写，请再试一次或改用键入。";
+}
+/* 浏览器语音识别：录音确认后必须等最终结果，不能提前读取空文本。 */
 function startASR() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
-  let transcript = "";
+  let finalTranscript = "", interimTranscript = "", error = "", settled = false, timer = null, resolveFinished;
+  const finished = new Promise(resolve => { resolveFinished = resolve; });
+  const text = () => (finalTranscript.trim() || interimTranscript.trim());
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    if (timer) { clearTimeout(timer); timer = null; }
+    resolveFinished({ transcript: text(), error });
+  };
   try {
     const r = new SR();
-    r.lang = "en-US"; r.continuous = true; r.interimResults = false;
+    r.lang = "en-US"; r.continuous = true; r.interimResults = true;
     r.onresult = e => {
-      for (let k = e.resultIndex; k < e.results.length; k++) if (e.results[k].isFinal) transcript += " " + e.results[k][0].transcript;
-      transcript = transcript.trim();
+      let nextInterim = "";
+      for (let k = e.resultIndex; k < e.results.length; k++) {
+        const result = e.results[k][0];
+        if (e.results[k].isFinal) finalTranscript += " " + result.transcript;
+        else nextInterim += " " + result.transcript;
+      }
+      if (nextInterim.trim()) interimTranscript = nextInterim.trim();
     };
-    r.onerror = () => { };
-    r.start();
-    return { stop() { try { r.stop(); } catch (e) { } }, getTranscript: () => transcript };
+    r.onerror = e => { error = e && e.error || "recognition-error"; };
+    r.onend = settle;
+    try { r.start(); }
+    catch (e) { error = e && e.name || "unsupported"; settle(); }
+    return {
+      finish() {
+        if (settled) return finished;
+        try { r.stop(); }
+        catch (e) { error = error || e && e.name || "recognition-error"; settle(); }
+        if (!settled) timer = setTimeout(() => { error = error || "timeout"; settle(); }, 2200);
+        return finished;
+      },
+      getTranscript: text,
+    };
   } catch (e) { return null; }
 }
-function rateTypedBonus(txt) {
-  const t = (txt || "").trim();
-  const words = t.split(/\s+/).filter(Boolean).length;
-  let bonus = 0;
-  if (/^[A-Z]/.test(t)) bonus += 2;
-  if (/[.?!]$/.test(t)) bonus += 2;
-  if (words >= 4) bonus += 2;
-  if (words >= 9) bonus += 2;
-  if (/[\u4e00-\u9fa5]/.test(t)) bonus = Math.max(0, bonus - 4);
-  if (words <= 2) bonus = Math.max(0, bonus - 3);
-  return bonus;
+const FREE_SCORE_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "by", "do", "for", "from", "have", "i", "in", "is", "it",
+  "me", "my", "of", "on", "or", "our", "please", "the", "that", "the", "their", "there", "they", "this", "to",
+  "we", "will", "with", "you", "your",
+]);
+function normalizeFreeScoreText(text) {
+  return (text || "").replace(/[\u2018\u2019\uFF07`]/g, "'").toLowerCase().trim();
+}
+function freeScoreWords(text, includeStopWords) {
+  return (normalizeFreeScoreText(text).match(/[a-z]+(?:'[a-z]+)?|\d+(?::\d+)?/g) || [])
+    .filter(word => includeStopWords || !FREE_SCORE_STOP_WORDS.has(word));
+}
+function inferFreeQuestionIntent(prompt) {
+  const t = normalizeFreeScoreText(prompt);
+  if (/^(when\b|what time\b)|\bwhen\b/.test(t)) return "time";
+  if (/^(where\b)|\bwhere\b/.test(t)) return "place";
+  if (/\bhow (many|much)\b|\bwhat (number|time)\b/.test(t)) return "quantity";
+  if (/^(why\b)|\bwhy\b/.test(t)) return "reason";
+  if (/\b(what|which).*(like|prefer|want|think)\b/.test(t)) return "preference";
+  if (/^(do|does|did|are|is|am|can|could|would|will|have|has|should)\b/.test(t)) return "yes-no";
+  return "action";
+}
+function matchesFreeQuestionIntent(answer, intent) {
+  const t = normalizeFreeScoreText(answer);
+  if (!t) return false;
+  if (intent === "time") return /\b(today|tomorrow|tonight|yesterday|morning|afternoon|evening|night|later|soon|early|late|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|year)\b|\b\d{1,2}(?::\d{2})?\s*(a\.?m\.?|p\.?m\.?)?\b/.test(t);
+  if (intent === "place") return /\b(here|there|home|office|airport|hotel|restaurant|store|school|station|downtown|upstairs|downstairs|near|at|in|on)\b/.test(t);
+  if (intent === "quantity") return /\b\d+(?:\.\d+)?\b|\b(one|two|three|four|five|six|seven|eight|nine|ten|few|many|much|some|half)\b/.test(t);
+  if (intent === "reason") return /\b(because|since|so|due to|to)\b/.test(t);
+  if (intent === "preference") return /\b(like|love|prefer|want|would rather|think|feel)\b/.test(t);
+  if (intent === "yes-no") return /^(yes|no|sure|certainly|absolutely|of course|i can|i can't|i do|i don't|i will|i won't)\b/.test(t);
+  return /\b(i|we|he|she|they|it|let's|let us)\b/.test(t);
+}
+function evaluateFreeResponse(answer, prompt, suggestions) {
+  const rawWords = freeScoreWords(answer, true);
+  const answerWords = freeScoreWords(answer, false);
+  const hasEnglish = /[a-z]/i.test(answer || "");
+  if (!hasEnglish || !rawWords.length) {
+    return { score: 0, relevance: 0, completeness: 0, naturalness: 0, feedback: ["请用英文回应这一轮。"] };
+  }
+  const intent = inferFreeQuestionIntent(prompt);
+  const answerSet = new Set(answerWords);
+  const referenceWords = [...new Set((suggestions || []).flatMap(s => freeScoreWords(s && s.en, false)))];
+  const promptWords = [...new Set(freeScoreWords(prompt, false))];
+  const referenceMatches = referenceWords.filter(word => answerSet.has(word)).length;
+  const promptMatches = promptWords.filter(word => answerSet.has(word)).length;
+  const intentMatched = matchesFreeQuestionIntent(answer, intent);
+  let relevance = 0;
+  if (intentMatched) relevance += 30;
+  if (referenceWords.length) relevance += Math.min(20, Math.round(referenceMatches / referenceWords.length * 20));
+  if (promptWords.length) relevance += Math.min(10, Math.round(promptMatches / promptWords.length * 10));
+  relevance = Math.min(50, relevance);
+  let completeness = rawWords.length >= 8 ? 30 : rawWords.length >= 5 ? 27 : rawWords.length >= 3 ? 23 : rawWords.length >= 2 ? 16 : 6;
+  const normalized = normalizeFreeScoreText(answer);
+  const hasSubject = /\b(i|we|you|he|she|they|it|there|this|that)\b/.test(normalized);
+  const hasVerb = /\b(am|are|is|was|were|be|been|being|can|could|will|would|should|have|has|had|do|does|did|go|come|arrive|leave|plan|need|want|like|love|prefer|think|book|make|take|stay|meet|call|help)\b/.test(normalized);
+  let naturalness = hasSubject && hasVerb ? 20 : intentMatched && rawWords.length <= 4 ? 14 : rawWords.length >= 3 ? 12 : 8;
+  if (/[^\x00-\x7F\s.,!?;:'"’\-]/.test(answer)) naturalness = Math.max(0, naturalness - 8);
+  const score = Math.min(100, relevance + completeness + naturalness);
+  const feedback = [];
+  if (relevance < 25) feedback.push("回答没有直接回应当前问题。");
+  else if (relevance < 45) feedback.push("回答方向正确，但可以补充更具体的信息。");
+  if (completeness < 25) feedback.push("信息还不够完整，试着补充主语、动作或细节。");
+  if (naturalness < 16) feedback.push("尽量组织成更自然的英文表达。");
+  if (!feedback.length) feedback.push("回答完整、切题，表达自然。");
+  return { score, relevance, completeness, naturalness, feedback };
+}
+function scoreFreeSession(turns) {
+  const contentTurns = (turns || []).map(turn => {
+    if (turn && turn.answerEvaluation && Number.isFinite(turn.answerEvaluation.score)) return turn.answerEvaluation.score;
+    if (turn && turn.type === "sug") return 40;
+    return 0;
+  });
+  const contentScore = contentTurns.length ? Math.round(contentTurns.reduce((sum, score) => sum + score, 0) / contentTurns.length) : 0;
+  return { total: contentScore, contentScore };
+}
+function renderFreeScoreSummary(session, turns) {
+  const total = Number.isFinite(session && session.total) ? session.total : 0;
+  const contentScore = Number.isFinite(session && session.contentScore) ? session.contentScore : 0;
+  const stars = total >= 90 ? "⭐⭐⭐⭐⭐" : total >= 75 ? "⭐⭐⭐⭐" : total >= 60 ? "⭐⭐⭐" : "⭐⭐";
+  const feedbackRows = (turns || []).map((turn, index) => {
+    const evaluation = turn && turn.answerEvaluation || { score: 0, feedback: [] };
+    const feedback = (evaluation.feedback || []).join(" ") || "本轮没有可用反馈。";
+    return `<div style="text-align:left;padding:7px 0;border-top:1px solid #edf0f7;font-size:12px;color:var(--muted)"><b style="color:var(--text)">第 ${index + 1} 轮 · ${evaluation.score || 0}/100</b><div style="margin-top:2px">${feedback}</div></div>`;
+  }).join("");
+  return `<div class="card" style="text-align:center">
+      <div style="font-size:20px;font-weight:800">🎉 对话完成！</div>
+      <div style="font-size:34px;font-weight:900;color:var(--primary);margin:8px 0 2px;">${total}<span style="font-size:14px;color:var(--muted)">/100</span></div>
+      <div style="letter-spacing:2px">${stars}</div>
+      <div style="display:flex;justify-content:center;gap:14px;margin:10px 0;font-size:13px;color:var(--muted)"><span>回答质量：<b style="color:var(--text)">${contentScore}/100</b></span></div>
+      <div style="font-size:11px;color:var(--muted);margin:8px 0 12px">评分只看英文回答是否切题、完整和自然，不按音质评分。</div>
+      ${feedbackRows ? `<div style="margin:8px 0 12px">${feedbackRows}</div>` : ""}
+      <button class="btn-primary" id="playStd" style="border:none;background:var(--primary);color:#fff;padding:12px 22px;border-radius:12px;font-weight:700;cursor:pointer;min-width:120px">▶ 播放示范</button>
+      <button class="btn-primary" id="stdBtn" style="border:none;background:var(--primary-light);color:var(--primary);padding:12px 22px;border-radius:12px;font-weight:700;cursor:pointer">📖 展开示范文本</button>
+    </div>`;
 }
 function renderFreeRun(scRaw) {
   const sc = JSON.parse(JSON.stringify(scRaw)); // 拷贝一份，避免 _shown 状态污染
@@ -977,6 +1137,8 @@ function renderFreeRun(scRaw) {
     return html;
   }
   function showUserTurn(l) {
+    const partnerLine = sc.lines.slice(0, i).reverse().find(line => line.who === "A");
+    const prompt = partnerLine ? partnerLine.en : "";
     $("#freeTurn").textContent = "第 " + (i + 1) + "/" + sc.lines.length + " 轮";
     $("#actions").innerHTML = `
       <button class="btn-primary" id="turnMic">🎤 我说</button>
@@ -989,33 +1151,38 @@ function renderFreeRun(scRaw) {
       recording = true; $("#turnMic").textContent = "🔴 说完点我确认"; $("#turnMic").classList.add("hot");
       const asr = startASR();
       $("#turnMic").onclick = async () => {
+        const micButton = $("#turnMic");
+        micButton.disabled = true; micButton.textContent = "⏳ 正在转写…"; micButton.classList.remove("hot");
+        const recognition = asr ? await asr.finish() : { transcript: "", error: "unsupported" };
         const rec = await Recorder.stop();
-        let transcript = asr && (asr.getTranscript() || "");
-        if (asr) asr.stop();
+        const transcript = recognition.transcript || "";
         recording = false; recUrls[i] = rec.url;
         let div;
         if (transcript) {
-          const bonus = rateTypedBonus(transcript);
-          userTurns.push({ type: "mic", bonus });
+          const answerEvaluation = evaluateFreeResponse(transcript, prompt, l.sugs);
+          userTurns.push({ type: "mic", answer: transcript, answerEvaluation });
           div = bubble("B", transcript, "翻译中…", true, rec.url);
           try { const zh = await mtZh(transcript); const z = div.querySelector(".bubble-zh"); if (z && zh) z.textContent = zh; } catch (e) { }
         } else {
-          userTurns.push({ type: "mic" });
-          div = bubble("B", "（我用说的这句话）", l.dir, true, rec.url);
+          userTurns.push({
+            type: "mic",
+            answer: "",
+            answerEvaluation: { score: 0, feedback: ["没有识别到英文回答，因此这轮无法评分。"] },
+          });
+          div = bubble("B", "（未转写到英文文本）", freeAsrFailureMessage(recognition.error), true, rec.url);
         }
         doneTurn();
       };
     };
     $("#turnType").onclick = () => {
       $("#hintBox").innerHTML = `
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">⌨️ 打出你想说的英文（applaud 我会按句长/大小写/标点/语种判定质量）：</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">⌨️ 打出你想说的英文（将按是否切题、完整和自然评分）：</div>
         <input id="typeIn" placeholder="Type your English here…" style="width:100%;padding:10px;border:1.5px solid #e3e6ef;border-radius:10px;font-size:14px;">
         <button class="btn-primary" id="typeGo" style="width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:var(--primary);color:#fff;font-weight:700;cursor:pointer;">说这句 →</button>`;
       $("#typeGo").onclick = async () => {
         const txt = $("#typeIn").value.trim();
         if (!txt) return toast("先输入一句英文");
-        const bonus = rateTypedBonus(txt);
-        userTurns.push({ type: "typed", bonus });
+        userTurns.push({ type: "typed", answer: txt, answerEvaluation: evaluateFreeResponse(txt, prompt, l.sugs) });
         const div = bubble("B", txt, "翻译中…", true, null);
         try { const zh = await mtZh(txt); if (zh) { const zhEl = div.querySelector(".bubble-zh"); if (zhEl) zhEl.textContent = zh; } } catch (e) { }
         doneTurn();
@@ -1026,12 +1193,15 @@ function renderFreeRun(scRaw) {
       $("#hintBox").innerHTML = hintHtml(l);
       $("#hintBox").querySelectorAll("[data-sug]").forEach(b => b.onclick = () => {
         const s = l.sugs[+b.dataset.sug];
-        userTurns.push({ type: "sug", en: s.en });
+        userTurns.push({ type: "sug", en: s.en, answerEvaluation: { score: 40, feedback: ["本轮使用了参考说法。"] } });
         bubble("B", s.en, s.zh, true, null);
         doneTurn();
       });
     };
-    $("#turnSkip").onclick = () => { userTurns.push({ type: "skip" }); bubble("B", "（跳过这轮）", "", true, null); doneTurn(); };
+    $("#turnSkip").onclick = () => {
+      userTurns.push({ type: "skip", answerEvaluation: { score: 0, feedback: ["本轮已跳过。"] } });
+      bubble("B", "（跳过这轮）", "", true, null); doneTurn();
+    };
   }
   function doneTurn() {
     $("#hintBox").innerHTML = ""; $("#actions").innerHTML = "";
@@ -1059,27 +1229,10 @@ function renderFreeRun(scRaw) {
   }
   async function endFree() {
     TTS.stop();
-    // 评分按轮次质量：录音 25 / 键入 22+句面质量加成 / 参考说法 14 / 跳过 6，完成底分 20
-    let score = 20;
-    userTurns.forEach(t => {
-      if (t.type === "mic") {
-        if (t.bonus !== undefined) score += Math.min(25, 20 + t.bonus); // 语转写成功：开口20+质量(最多+8形状)→封顶25
-        else score += 20; // 无转写（识别不可用）：开口满分 20
-      } else if (t.type === "typed") score += Math.min(25, 18 + (t.bonus || 0));
-      else if (t.type === "sug") score += 14; else score += 6;
-    });
-    score = Math.min(100, Math.round(score));
-    const stars = score >= 90 ? "⭐⭐⭐⭐⭐" : score >= 75 ? "⭐⭐⭐⭐" : score >= 60 ? "⭐⭐⭐" : "⭐⭐";
+    const session = scoreFreeSession(userTurns);
     Store.addDialogDone(); Store.save();
     $("#hintBox").style.display = "none"; $("#actions").innerHTML = "";
-    $("#endBox").innerHTML = `<div class="card" style="text-align:center">
-        <div style="font-size:20px;font-weight:800">🎉 对话完成！</div>
-        <div style="font-size:34px;font-weight:900;color:var(--primary);margin:8px 0 2px;">${score}<span style="font-size:14px;color:var(--muted)">/100</span></div>
-        <div style="letter-spacing:2px">${stars}</div>
-        <div style="font-size:11px;color:var(--muted);margin:8px 0 12px">评分依据：开口/键入 20 分 + 文本质量（大写/标点/句长 ≤8）；录音识别出文本另算句面分（语音识别不可用则按开口满分计）· 参考说法 14 · 跳过 6 · 完成 +20</div>
-        <button class="btn-primary" id="playStd" style="border:none;background:var(--primary);color:#fff;padding:12px 22px;border-radius:12px;font-weight:700;cursor:pointer;min-width:120px">▶ 播放示范</button>
-        <button class="btn-primary" id="stdBtn" style="border:none;background:var(--primary-light);color:var(--primary);padding:12px 22px;border-radius:12px;font-weight:700;cursor:pointer">📖 展开示范文本</button>
-      </div>
+    $("#endBox").innerHTML = renderFreeScoreSummary(session, userTurns) + `
       <div class="card" id="stdCard" style="display:none">
         <div class="section-title">📖 标准示范</div>
         ${sc.lines.map(l => l.who === "A"
