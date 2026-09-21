@@ -609,6 +609,9 @@ function renderListen(topicId) {
     document.querySelectorAll(".line-item .w[data-w]").forEach(sp => {
       sp.onclick = e => {
         e.stopPropagation(); e.preventDefault();
+        // 划选句子/短语时交给句子翻译浮条，不弹单词面板（句子翻译只要中文，不要音标）
+        const sel = window.getSelection ? String(window.getSelection()).trim() : "";
+        if (sel.length > 0) return;
         if (sp.dataset.w) showWordPop(sp.dataset.w, topic);
       };
     });
@@ -861,6 +864,8 @@ function setupPhraseSelection() {
     const sel = window.getSelection ? String(window.getSelection()) : "";
     let onListen = viewFn === renderListen || viewFn.name === "renderListen";
     if (!onListen || !sel || sel.trim().length < 2) { phraseBarEl.style.display = "none"; return; }
+    // 划选翻译句子时，若残留单词面板（带音标）一并关闭：句子翻译只展示中文
+    if (typeof wordPopEl !== "undefined" && wordPopEl && wordPopEl.isConnected) wordPopEl.remove();
     const phrase = sel.trim().replace(/\s+/g, " ");
     let meaning = "";
     phraseBarEl.className = "word-pop phrase-pop";
